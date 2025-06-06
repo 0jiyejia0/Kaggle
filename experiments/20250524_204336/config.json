@@ -1,0 +1,56 @@
+{
+    "random_seed": 42,
+    "cv_folds": 3,
+    "use_gpu": false,
+    "feature_selection": {
+        "n_features": 30,
+        "method": "selectkbest"
+    },
+    "models": {
+        "xgb": {
+            "enabled": true,
+            "params": {
+                "n_estimators": 1000,
+                "learning_rate": 0.05,
+                "max_depth": 6
+            }
+        },
+        "lgb": {
+            "enabled": true,
+            "params": {
+                "n_estimators": 1000,
+                "learning_rate": 0.05,
+                "num_leaves": 31,
+                "min_child_samples": 10,
+                "min_split_gain": 0.01,
+                "reg_alpha": 0.01,
+                "reg_lambda": 0.01
+            }
+        },
+        "cat": {
+            "enabled": true,
+            "params": {
+                "iterations": 500,
+                "learning_rate": 0.05,
+                "depth": 6,
+                "task_type": "CPU",
+                "bootstrap_type": "Bernoulli",
+                "subsample": 0.8
+            }
+        },
+        "tabnet": {
+            "enabled": false,
+            "params": {
+                "n_d": 24,
+                "n_a": 24,
+                "n_steps": 5
+            }
+        }
+    },
+    "ensemble": {
+        "methods": [
+            "weighted"
+        ],
+        "weights_method": "auto"
+    }
+}

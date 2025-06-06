@@ -1,0 +1,41 @@
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# Python 缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch
+*.pth
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+
+# 模型文件（如果很大的话）
+# *.pkl
+# *.joblib
+# *.h5
+
+# 环境变量文件
+.env 
