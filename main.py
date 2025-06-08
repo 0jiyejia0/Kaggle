@@ -15,6 +15,7 @@ warnings.filterwarnings('ignore')
 
 # 导入报告生成器的主函数
 from experiment_report_generator import main as generate_report # 或者导入 create_performance_report
+from eda_analysis import generate_eda_plots
 
 def setup_experiment_tracking():
     """设置实验跟踪"""
@@ -102,6 +103,9 @@ def safe_model_training(model_name, X_train, y_train_log, y_train, X_test, exper
 
 def main():
     print("🎯 === 开始最终版本的模型训练 ===")
+    
+    # 首先，执行探索性数据分析（如果图表不存在）
+    generate_eda_plots()
     
     # 设置实验跟踪
     experiment_dir = setup_experiment_tracking()
