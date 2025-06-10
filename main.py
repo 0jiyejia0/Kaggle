@@ -4,7 +4,6 @@ from data_preprocessing import load_and_preprocess_data
 from feature_engineering import add_features, select_features
 from model_training import train_model_cv
 from ensemble import calculate_weights, blend_predictions, stacking_predictions
-from model_evaluation import evaluate_predictions
 import matplotlib.pyplot as plt
 import seaborn as sns
 import json
@@ -16,7 +15,6 @@ warnings.filterwarnings('ignore')
 # 导入报告生成器的主函数
 from experiment_report_generator import main as generate_report # 或者导入 create_performance_report
 from eda_analysis import generate_eda_plots
-from shap_analysis import shap_analysis
 
 def setup_experiment_tracking():
     """设置实验跟踪"""
@@ -356,24 +354,6 @@ def main():
             plot_feature_importance(feature_importance, experiment_dir)
     except Exception as e:
         print(f"❌ 特征重要性分析失败: {str(e)}")
-
-    # === SHAP 全局解释 ===
-    try:
-        if "xgb" in models_results and models_results["xgb"]["final_model"] is not None:
-            print("\n📈 开始计算 SHAP 全局解释 (XGBoost)...")
-            # 选取最多500行样本以加速SHAP计算
-            shap_sample = X_train.sample(n=min(500, len(X_train)), random_state=42)
-            shap_output_path = f"{experiment_dir}/plots/shap_summary.png"
-            shap_analysis(
-                model=models_results["xgb"]["final_model"],
-                X_sample=shap_sample,
-                feature_names=X_train.columns.tolist(),
-                output_plot=shap_output_path
-            )
-        else:
-            print("⚠️ 未找到可用的XGBoost模型，跳过SHAP解释")
-    except Exception as e:
-        print(f"❌ 计算SHAP解释失败: {str(e)}")
     
     print(f"\n🎉 === 实验完成 ===")
     print(f"📁 结果保存在: {experiment_dir}")

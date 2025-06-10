@@ -70,18 +70,6 @@ def handle_skewed_features(df, threshold=0.75):
     
     return df, skewed_features
 
-def remove_outliers(df, threshold=3):
-    """移除异常值"""
-    numeric_features = df.select_dtypes(include=['int64', 'float64']).columns
-    
-    for feature in numeric_features:
-        # 计算Z分数
-        z_scores = np.abs((df[feature] - df[feature].mean()) / df[feature].std())
-        # 移除超过阈值的样本
-        df = df[z_scores < threshold]
-    
-    return df
-
 def load_and_preprocess_data(train_path="data/train.csv", test_path="data/test.csv"):
     """加载和预处理数据的主函数"""
     print("加载数据...")
@@ -111,25 +99,3 @@ def load_and_preprocess_data(train_path="data/train.csv", test_path="data/test.c
     
     print("数据预处理完成。")
     return X_train, X_test, y_train, None, test_ids  # 返回 test_ids
-
-def preprocess_new_data(df, encoders, scaler, skewed_features):
-    """预处理新数据"""
-    # 处理缺失值
-    df = handle_missing_values(df)
-    
-    # 处理偏态特征
-    for feature in skewed_features:
-        if feature in df.columns:
-            df[feature] = np.log1p(df[feature] - df[feature].min() + 1)
-    
-    # 编码类别特征
-    categorical_features = df.select_dtypes(include=['object']).columns
-    for feature in categorical_features:
-        if feature in encoders:
-            df[feature] = encoders[feature].transform(df[feature])
-    
-    # 标准化数值特征
-    numeric_features = df.select_dtypes(include=['int64', 'float64']).columns
-    df[numeric_features] = scaler.transform(df[numeric_features])
-    
-    return df

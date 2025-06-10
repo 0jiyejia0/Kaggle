@@ -56,81 +56,12 @@ def weighted_average(predictions_list, weights_list):
     
     return weighted_pred
 
-def rank_average(predictions_list, weights_list=None):
-    """
-    排序平均融合
-    """
-    if not predictions_list:
-        return None
-        
-    # 将每个模型的预测转换为排名
-    ranks_list = [rankdata(pred) for pred in predictions_list]
-    ranks_array = np.array(ranks_list)
-    
-    if weights_list is not None:
-        weights_array = np.array(weights_list).reshape(-1, 1)
-        # 计算加权平均排名
-        average_ranks = np.sum(ranks_array * weights_array, axis=0)
-    else:
-        # 计算简单平均排名
-        average_ranks = np.mean(ranks_array, axis=0)
-    
-    # 将平均排名转换回原始尺度
-    final_pred = np.mean(predictions_list, axis=0)
-    final_pred[np.argsort(average_ranks)] = np.sort(final_pred)
-    
-    return final_pred
-
-def stack_ensemble(train_preds, train_y, test_preds, final_estimator=None):
-    """
-    使用stacking方法融合模型
-    """
-    if final_estimator is None:
-        final_estimator = Ridge(alpha=1.0, random_state=42)
-    
-    # 使用5折交叉验证生成meta特征
-    n_folds = 5
-    n_train = train_preds.shape[0]
-    n_test = test_preds.shape[0]
-    n_models = train_preds.shape[1]
-    
-    # 初始化存储数组
-    meta_train = np.zeros((n_train,))
-    meta_test = np.zeros((n_test,))
-    
-    # 使用K折交叉验证训练meta模型
-    kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-    for train_idx, val_idx in kf.split(train_preds):
-        # 训练集分割
-        X_train = train_preds[train_idx]
-        y_train = train_y[train_idx]
-        X_val = train_preds[val_idx]
-        
-        # 训练meta模型
-        meta_model = Ridge(alpha=1.0, random_state=42)
-        meta_model.fit(X_train, y_train)
-        
-        # 生成验证集和测试集预测
-        meta_train[val_idx] = meta_model.predict(X_val)
-        meta_test += meta_model.predict(test_preds) / n_folds
-    
-    # 训练最终meta模型
-    final_estimator.fit(train_preds, train_y)
-    final_pred = final_estimator.predict(test_preds)
-    
-    # 将stacking预测与原始模型预测结合
-    final_pred = 0.7 * final_pred + 0.3 * meta_test
-    
-    return final_estimator, final_pred
-
 def blend_predictions(predictions_list, weights_list=None, method='weighted'):
     """
     综合融合函数，支持多种融合方法
     """
     if method == 'weighted':
         return weighted_average(predictions_list, weights_list)
-    elif method == 'rank':
-        return rank_average(predictions_list, weights_list)
     elif method == 'mean':
         return np.mean(predictions_list, axis=0)
     elif method == 'median':
