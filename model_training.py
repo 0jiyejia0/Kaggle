@@ -406,9 +406,11 @@ def train_model_cv(model_name, X, y_log, y, X_test=None, output_model_dir=None, 
         print(f"\nFinished {model_name}. 使用已保存模型，未进行交叉验证评估。")
     
     return {
-        "oof_preds": oof_preds,               # 训练集上的OOF预测（原始尺度）
-        "final_model": final_model,           # 全量训练的最终模型
-        "final_test_pred": final_test_pred,   # 测试集最终预测（原始尺度）
+        "oof_preds": oof_preds,                   # 训练集上的OOF预测（原始尺度）
+        "oof_preds_log": oof_preds_log,           # 训练集上的OOF预测（对数尺度）
+        "test_preds_cv_log": test_preds_accum_log,# CV期间的测试集预测平均值（对数尺度）
+        "final_model": final_model,               # 全量训练的最终模型
+        "final_test_pred": final_test_pred,       # 测试集最终预测（原始尺度）
         "metrics": {
             "rmse": cv_rmse,
             "mae": cv_mae,

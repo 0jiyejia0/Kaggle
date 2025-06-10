@@ -12,23 +12,30 @@ plt.rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体
 plt.rcParams['axes.unicode_minus'] = False   # 解决负号显示问题
 
 def load_predictions_from_experiment(experiment_dir):
-    """从实验目录加载预测结果"""
+    """从实验目录加载所有预测结果，包括加权和stacking融合。"""
     predictions = {}
-    pred_dir = f"{experiment_dir}/predictions"
+    pred_dir = os.path.join(experiment_dir, "predictions")
     
-    if os.path.exists(pred_dir):
-        for file in os.listdir(pred_dir):
-            if file.startswith('predictions_') and file.endswith('.csv'):
-                model_name = file.replace('predictions_', '').replace('.csv', '')
-                df = pd.read_csv(f"{pred_dir}/{file}")
-                predictions[model_name] = df['SalePrice'].values
-                print(f"✅ 加载 {model_name} 预测结果: {len(df)} 条")
-        
-        # 加载融合预测
-        if os.path.exists(f"{pred_dir}/final_predictions.csv"):
-            df_final = pd.read_csv(f"{pred_dir}/final_predictions.csv")
-            predictions['ensemble'] = df_final['SalePrice'].values
-            print(f"✅ 加载融合预测结果: {len(df_final)} 条")
+    if not os.path.exists(pred_dir):
+        print(f"❌ 预测目录不存在: {pred_dir}")
+        return predictions
+
+    print(f"📂 正在从 {pred_dir} 加载预测...")
+    for file in os.listdir(pred_dir):
+        file_path = os.path.join(pred_dir, file)
+        if file.startswith('predictions_') and file.endswith('.csv'):
+            model_name = file.replace('predictions_', '').replace('.csv', '')
+            df = pd.read_csv(file_path)
+            predictions[model_name] = df['SalePrice'].values
+        elif file == 'submission_weighted.csv':
+            df_final = pd.read_csv(file_path)
+            predictions['ensemble_weighted'] = df_final['SalePrice'].values
+        elif file == 'submission_stacking.csv':
+            df_final = pd.read_csv(file_path)
+            predictions['ensemble_stacking'] = df_final['SalePrice'].values
+
+    for name, pred in predictions.items():
+        print(f"✅ 已加载 '{name}' 预测结果: {len(pred)} 条")
     
     return predictions
 
@@ -36,94 +43,50 @@ def analyze_prediction_distribution(predictions, output_dir):
     """分析预测分布"""
     print("\n📊 === 预测分布分析 ===")
     
-    # 创建分布图
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    ensemble_keys = [k for k in predictions.keys() if 'ensemble' in k]
+    individual_keys = [k for k in predictions.keys() if 'ensemble' not in k]
+
+    num_plots = 2 + len(ensemble_keys)
+    fig, axes = plt.subplots(1, num_plots, figsize=(8 * num_plots, 6))
     
     # 1. 各模型预测分布对比
-    ax1 = axes[0, 0]
-    for model_name, pred in predictions.items():
-        if model_name != 'ensemble':
-            ax1.hist(pred, alpha=0.6, bins=50, label=model_name, density=True)
-    ax1.set_xlabel('预测价格')
-    ax1.set_ylabel('密度')
-    ax1.set_title('各模型预测分布对比')
+    ax1 = axes[0]
+    for model_name in individual_keys:
+        sns.kdeplot(predictions[model_name], ax=ax1, label=model_name, fill=True, alpha=0.2)
+    ax1.set_title('各基模型预测分布对比 (KDE)')
     ax1.legend()
-    ax1.grid(True, alpha=0.3)
     
-    # 2. 预测统计表
+    # 2. 模型相关性
+    ax2 = axes[1]
+    pred_matrix = np.array([predictions[name] for name in individual_keys]).T
+    corr_matrix = pd.DataFrame(pred_matrix, columns=individual_keys).corr()
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', ax=ax2, fmt=".3f")
+    ax2.set_title('基模型预测相关性')
+
+    # 3. 各融合模型分布
+    for i, key in enumerate(ensemble_keys):
+        ax = axes[2 + i]
+        sns.kdeplot(predictions[key], ax=ax, label=key, fill=True, color='red')
+        ax.set_title(f'{key} 预测分布')
+        ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "prediction_analysis.png"), dpi=200)
+    plt.close()
+
+    # 统计表
     stats_data = []
     for model_name, pred in predictions.items():
         stats = {
             '模型': model_name,
-            '均值': f"{pred.mean():.0f}",
-            '中位数': f"{np.median(pred):.0f}",
-            '标准差': f"{pred.std():.0f}",
-            '最小值': f"{pred.min():.0f}",
-            '最大值': f"{pred.max():.0f}",
-            '偏度': f"{pd.Series(pred).skew():.3f}"
+            '均值': f"{pred.mean():.0f}", '中位数': f"{np.median(pred):.0f}",
+            '标准差': f"{pred.std():.0f}", '最小值': f"{pred.min():.0f}",
+            '最大值': f"{pred.max():.0f}", '偏度': f"{pd.Series(pred).skew():.3f}"
         }
         stats_data.append(stats)
-        print(f"🔸 {model_name}: 均值={pred.mean():.0f}, 标准差={pred.std():.0f}, 范围=[{pred.min():.0f}, {pred.max():.0f}]")
-    
-    # 3. 箱线图
-    ax2 = axes[0, 1]
-    box_data = [pred for model_name, pred in predictions.items() if model_name != 'ensemble']
-    box_labels = [name for name in predictions.keys() if name != 'ensemble']
-    ax2.boxplot(box_data, labels=box_labels)
-    ax2.set_ylabel('预测价格')
-    ax2.set_title('预测价格箱线图')
-    ax2.tick_params(axis='x', rotation=45)
-    ax2.grid(True, alpha=0.3)
-    
-    # 4. 模型相关性
-    if len(predictions) > 1:
-        ax3 = axes[1, 0]
-        model_names = [name for name in predictions.keys() if name != 'ensemble']
-        pred_matrix = np.array([predictions[name] for name in model_names]).T
-        corr_matrix = np.corrcoef(pred_matrix.T)
-        
-        im = ax3.imshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1)
-        ax3.set_xticks(range(len(model_names)))
-        ax3.set_yticks(range(len(model_names)))
-        ax3.set_xticklabels(model_names)
-        ax3.set_yticklabels(model_names)
-        ax3.set_title('模型预测相关性')
-        
-        # 添加数值标注
-        for i in range(len(model_names)):
-            for j in range(len(model_names)):
-                ax3.text(j, i, f'{corr_matrix[i, j]:.3f}', 
-                        ha="center", va="center", color="black")
-        plt.colorbar(im, ax=ax3)
-    
-    # 5. 融合效果对比
-    ax4 = axes[1, 1]
-    if 'ensemble' in predictions:
-        individual_models = [name for name in predictions.keys() if name != 'ensemble']
-        ensemble_pred = predictions['ensemble']
-        
-        # 计算各模型与融合结果的差异
-        differences = []
-        for model_name in individual_models:
-            diff = np.abs(predictions[model_name] - ensemble_pred)
-            differences.append(diff)
-            ax4.hist(diff, alpha=0.6, bins=30, label=f'{model_name} vs Ensemble', density=True)
-        
-        ax4.set_xlabel('与融合预测的绝对差异')
-        ax4.set_ylabel('密度')
-        ax4.set_title('各模型与融合预测的差异分布')
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/prediction_analysis.png", dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # 保存统计表
     stats_df = pd.DataFrame(stats_data)
-    stats_df.to_csv(f"{output_dir}/prediction_statistics.csv", index=False)
-    print(f"✅ 预测分析图已保存到: {output_dir}/prediction_analysis.png")
-    
+    stats_df.to_csv(os.path.join(output_dir, "prediction_statistics.csv"), index=False)
+    print(f"✅ 预测分析图和统计表已保存。")
     return stats_df
 
 def analyze_price_segments(predictions, output_dir):
@@ -166,93 +129,92 @@ def analyze_price_segments(predictions, output_dir):
     return segment_df
 
 def create_performance_report(experiment_dir):
-    """创建完整的性能报告"""
+    """为主实验目录创建性能报告"""
     print("📋 === 创建性能报告 ===")
     
-    # 创建报告目录
-    report_dir = f"{experiment_dir}/performance_report"
+    report_dir = os.path.join(experiment_dir, "performance_report")
     os.makedirs(report_dir, exist_ok=True)
     
-    # 加载预测结果
     predictions = load_predictions_from_experiment(experiment_dir)
     
     if not predictions:
-        print("❌ 未找到预测结果，无法生成报告")
-        return None
-    
-    # 1. 分布分析
+        print("❌ 警告: 未找到任何预测结果，无法生成报告。")
+        return False
+
     stats_df = analyze_prediction_distribution(predictions, report_dir)
     
-    # 2. 价格段分析
-    segment_df = analyze_price_segments(predictions, report_dir)
+    ensemble_keys = [k for k in predictions.keys() if 'ensemble' in k]
+    best_ensemble = ""
+    if 'ensemble_stacking' in ensemble_keys:
+        best_ensemble = 'ensemble_stacking'
+    elif 'ensemble_weighted' in ensemble_keys:
+        best_ensemble = 'ensemble_weighted'
     
-    # 3. 生成文本报告
-    report_text = f"""
-# 模型性能评估报告
+    report_text = f"""# 模型性能评估报告
 
 ## 🎯 实验信息
-- 实验时间: {experiment_dir.split('/')[-1]}
-- 模型数量: {len([k for k in predictions.keys() if k != 'ensemble'])}
-- 预测样本数: {len(list(predictions.values())[0])}
+- **实验目录**: `{experiment_dir}`
+- **模型数量**: {len([k for k in predictions.keys() if 'ensemble' not in k])}
+- **预测样本数**: {len(list(predictions.values())[0])}
 
 ## 📊 模型预测统计
-
-{stats_df.to_string(index=False)}
-
-## 🏘️ 价格段分布
-
-{segment_df.to_string(index=False)}
+{stats_df.to_markdown(index=False)}
 
 ## 🎉 结论
-- 最优单模型: {min(predictions.keys(), key=lambda x: np.std(predictions[x]) if x != 'ensemble' else float('inf'))}
-- 预测范围: ${min(predictions['ensemble']):.0f} - ${max(predictions['ensemble']):.0f}
-- 平均预测价格: ${np.mean(predictions['ensemble']):.0f}
-
-## 📈 建议
-1. 模型预测结果较为一致，融合效果良好
-2. 关注高价位房屋的预测准确性
-3. 可以考虑添加更多特征来提升性能
 """
+    if best_ensemble:
+        report_text += f"- **最终融合方法**: `{best_ensemble}`\n"
+        report_text += f"- **预测范围**: `${min(predictions[best_ensemble]):,.0f} - ${max(predictions[best_ensemble]):,.0f}`\n"
+        report_text += f"- **平均预测价格**: `${np.mean(predictions[best_ensemble]):,.0f}`\n"
+    else:
+        report_text += "- 未找到融合模型的预测结果。\n"
+
+    report_text += "\n## 📈 可视化分析\n"
+    report_text += "![预测分析图](prediction_analysis.png)\n"
     
-    with open(f"{report_dir}/performance_report.md", "w", encoding='utf-8') as f:
+    report_file_path = os.path.join(report_dir, "performance_report.md")
+    with open(report_file_path, "w", encoding='utf-8') as f:
         f.write(report_text)
     
-    print(f"✅ 完整性能报告已保存到: {report_dir}/")
-    return report_dir
+    print(f"✅ 完整性能报告已保存到: {report_file_path}")
+    return True
 
-def main():
+def main(experiment_dir=None):
+    """
+    为指定的实验目录生成报告。
+    如果未提供目录，则尝试自动查找最新的目录。
+    """
     print("🎯 === 模型性能全面评估 ===")
     
-    # 找到最新的实验目录 (保留这部分逻辑，因为报告生成器需要它)
-    experiment_path = None
-    experiments_dir = "experiments"
-    if os.path.exists(experiments_dir):
-        experiment_dirs = sorted([d for d in os.listdir(experiments_dir) if os.path.isdir(os.path.join(experiments_dir, d))])
-        if experiment_dirs:
-            latest_experiment = experiment_dirs[-1] # 获取最新的
-            experiment_path = os.path.join(experiments_dir, latest_experiment)
-            print(f"INFO: 将为实验目录 '{experiment_path}' 生成报告")
+    if experiment_dir is None:
+        print("-- 未提供实验目录，尝试自动查找最新目录 --")
+        experiments_root = "experiments"
+        if os.path.exists(experiments_root):
+            all_dirs = [d for d in os.listdir(experiments_root) if os.path.isdir(os.path.join(experiments_root, d)) and d != 'eda_plots']
+            if all_dirs:
+                experiment_dir = os.path.join(experiments_root, max(all_dirs))
+                print(f"INFO: 自动选择最新实验目录: '{experiment_dir}'")
+            else:
+                print(f"❌ 错误: 在 '{experiments_root}' 目录下没有找到有效的实验子目录。")
+                return False
         else:
-            print("WARNING: 在 'experiments' 目录下没有找到实验子目录。")
-    else:
-        print(f"WARNING: 'experiments' 目录不存在。")
+            print(f"❌ 错误: 'experiments' 目录不存在。")
+            return False
 
-    if experiment_path:
-        # 创建性能报告
-        report_dir = create_performance_report(experiment_path)
-        
-        if report_dir:
-            print(f"\n🎉 === 评估完成 ===")
-            print(f"📁 完整报告保存在: {report_dir}")
-            print(f"📊 主要文件:")
-            print(f"   - prediction_analysis.png (预测分析图)")
-            print(f"   - prediction_statistics.csv (预测统计)")
-            print(f"   - price_segment_analysis.csv (价格段分析)")
-            print(f"   - performance_report.md (完整报告)")
+    if experiment_dir:
+        success = create_performance_report(experiment_dir)
+        if success:
+            print("\n🎉 === 报告生成成功 ===")
         else:
-            print("❌ 报告生成失败")
-    else:
-        print("❌ 未找到实验目录")
+            print("\n❌ === 报告生成失败 ===")
+        return success
+    return False
 
 if __name__ == "__main__":
+    # 作为一个独立脚本运行时，可以手动指定目录或让它自动查找
+    # import sys
+    # if len(sys.argv) > 1:
+    #     main(sys.argv[1])
+    # else:
+    #     main()
     main() 

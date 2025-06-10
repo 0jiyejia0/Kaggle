@@ -3,7 +3,7 @@ import numpy as np
 from data_preprocessing import load_and_preprocess_data
 from feature_engineering import add_features, select_features
 from model_training import train_model_cv
-from ensemble import calculate_weights, blend_predictions
+from ensemble import calculate_weights, blend_predictions, stacking_predictions
 from model_evaluation import evaluate_predictions
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -161,7 +161,7 @@ def main():
             }
         },
         "ensemble": {
-            "methods": ["weighted"],
+            "methods": ["weighted", "stacking"],
             "weights_method": "auto"
         }
     }
@@ -207,6 +207,9 @@ def main():
     models_results = {}
     test_predictions = {}
     model_metrics = {}
+    oof_predictions = {}
+    oof_predictions_log = {}
+    test_predictions_log = {}
     
     enabled_models = [name for name, model_config in config["models"].items() if model_config["enabled"]]
     print(f"🎯 将训练以下模型: {enabled_models}")
@@ -222,7 +225,18 @@ def main():
             if "final_test_pred" in result and result["final_test_pred"] is not None:
                 test_predictions[model_name] = result["final_test_pred"]
                 print(f"✅ {model_name} 预测结果已保存")
+
+            # 存储OOF预测用于Stacking
+            if "oof_preds" in result and result["oof_preds"] is not None:
+                oof_predictions[model_name] = result["oof_preds"]
+                print(f"✅ {model_name} OOF预测已保存")
             
+            # 存储对数尺度的OOF和测试集预测，用于Stacking
+            if "oof_preds_log" in result and result["oof_preds_log"] is not None:
+                oof_predictions_log[model_name] = result["oof_preds_log"]
+            if "test_preds_cv_log" in result and result["test_preds_cv_log"] is not None:
+                test_predictions_log[model_name] = result["test_preds_cv_log"]
+
             # 存储每个模型的评估指标
             if "metrics" in result and result["metrics"] is not None:
                 model_metrics[model_name] = result["metrics"]
@@ -245,50 +259,92 @@ def main():
     
     # 模型融合
     print("\n🔀 === 开始模型融合 ===")
-    try:
-        if len(model_metrics) > 0:
-            # 获取各个模型的权重
-            weights = calculate_weights(model_metrics)
-            print("\n⚖️ 模型权重:")
-            for model_name, weight in weights.items():
-                print(f"   🔸 {model_name}: {weight:.4f}")
-        else:
-            # 如果没有指标，使用等权重
-            weights = {name: 1.0/len(test_predictions) for name in test_predictions.keys()}
-            print("⚖️ 使用等权重融合")
-        
-        # 加权平均融合
-        if len(test_predictions) > 1:
-            ensemble_pred = blend_predictions(
-                list(test_predictions.values()),
-                list(weights.values()),
-                method="weighted"
-            )
-            print("✅ 多模型融合完成")
-        else:
-            # 如果只有一个模型，直接使用其预测
-            ensemble_pred = list(test_predictions.values())[0]
-            print("✅ 单模型预测")
-        
-        # 保存预测结果
-        if ensemble_pred is not None:
-            submission_df = pd.DataFrame({
-                'Id': test_ids,
-                'SalePrice': ensemble_pred
-            })
-            submission_path = f"{experiment_dir}/predictions/final_predictions.csv"
-            submission_df.to_csv(submission_path, index=False)
-            print(f"✅ 最终预测结果已保存到: {submission_path}")
-            
-            # 显示预测统计
-            print(f"📈 预测统计: 均值={ensemble_pred.mean():.0f}, 标准差={ensemble_pred.std():.0f}")
-            print(f"📈 预测范围: {ensemble_pred.min():.0f} - {ensemble_pred.max():.0f}")
-        
-    except Exception as e:
-        print(f"❌ 模型融合失败: {str(e)}")
-        import traceback
-        traceback.print_exc()
     
+    # 检查启用的融合方法
+    ensemble_methods = config.get("ensemble", {}).get("methods", [])
+
+    # --- 1. 加权平均融合 ---
+    if "weighted" in ensemble_methods:
+        try:
+            print("\n--- 开始加权平均融合 ---")
+            if len(model_metrics) > 0:
+                # 获取各个模型的权重
+                weights = calculate_weights(model_metrics)
+                print("\n⚖️ 模型权重:")
+                for model_name, weight in weights.items():
+                    print(f"   🔸 {model_name}: {weight:.4f}")
+            else:
+                # 如果没有指标，使用等权重
+                weights = {name: 1.0/len(test_predictions) for name in test_predictions.keys()}
+                print("⚖️ 使用等权重融合")
+            
+            # 加权平均融合
+            if len(test_predictions) > 1:
+                ensemble_pred = blend_predictions(
+                    list(test_predictions.values()),
+                    list(weights.values()),
+                    method="weighted"
+                )
+                print("✅ 多模型加权融合完成")
+            else:
+                # 如果只有一个模型，直接使用其预测
+                ensemble_pred = list(test_predictions.values())[0]
+                print("✅ 单模型预测")
+            
+            # 保存预测结果
+            if ensemble_pred is not None:
+                submission_df = pd.DataFrame({
+                    'Id': test_ids,
+                    'SalePrice': ensemble_pred
+                })
+                submission_path = f"{experiment_dir}/predictions/submission_weighted.csv"
+                submission_df.to_csv(submission_path, index=False)
+                print(f"✅ 加权平均预测结果已保存到: {submission_path}")
+            
+        except Exception as e:
+            print(f"❌ 加权平均融合失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    # --- 2. Stacking 融合 ---
+    if "stacking" in ensemble_methods:
+        try:
+            print("\n--- 开始Stacking融合 ---")
+            if len(oof_predictions) < 2 or len(test_predictions) < 2:
+                print("⚠️ Stacking需要至少2个模型，跳过此步骤。")
+            else:
+                # 确保OOF和测试预测的模型一致
+                common_models = sorted(list(set(oof_predictions_log.keys()) & set(test_predictions_log.keys())))
+                
+                if len(common_models) < 2:
+                    print("⚠️ Stacking所需模型的对数尺度预测不完整，跳过此步骤。")
+                else:
+                    oof_preds_aligned = {model: oof_predictions_log[model] for model in common_models}
+                    test_preds_aligned = {model: test_predictions_log[model] for model in common_models}
+
+                    print(f"用于Stacking的模型: {common_models}")
+
+                    stacking_pred = stacking_predictions(
+                        oof_predictions_log=oof_preds_aligned,
+                        test_predictions_log=test_preds_aligned,
+                        y_train_log=y_train_log,
+                        model_dir=f"{experiment_dir}/models"
+                    )
+                
+                    if stacking_pred is not None:
+                        submission_df = pd.DataFrame({
+                            'Id': test_ids,
+                            'SalePrice': stacking_pred
+                        })
+                        submission_path = f"{experiment_dir}/predictions/submission_stacking.csv"
+                        submission_df.to_csv(submission_path, index=False)
+                        print(f"✅ Stacking预测结果已保存到: {submission_path}")
+
+        except Exception as e:
+            print(f"❌ Stacking融合失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     # 特征重要性分析
     try:
         if "xgb" in models_results and models_results["xgb"]["final_model"] is not None:
@@ -327,10 +383,13 @@ def main():
         print(f"⚠️ 失败的模型: {failed_models}")
 
     # 在实验结束后生成报告
-    print("\n📋 === 开始生成实验报告 ===")
+    print(f"\n📋 === 开始生成实验报告 ===")
     try:
-        generate_report() # 调用报告生成器的主函数
-        print("✅ 实验报告已生成")
+        success = generate_report(experiment_dir) # 调用报告生成器的主函数
+        if success:
+            print("✅ 实验报告已生成")
+        else:
+            print("⚠️ 实验报告生成过程中出现问题，请查看上方日志。")
     except Exception as e:
         print(f"❌ 生成实验报告时出错: {str(e)}")
         import traceback
